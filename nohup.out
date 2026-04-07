@@ -1,0 +1,21 @@
+🚀 Stopping existing server on port 5001...
+📦 Starting Pricing Agent with python3...
+💡 (Note: using python3 ensures your libraries are found correctly)
+📄 Logs are being saved to app.log
+
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/requests/__init__.py:86: RequestsDependencyWarning: Unable to find acceptable character detection dependency (chardet or charset_normalizer).
+  warnings.warn(
+Traceback (most recent call last):
+  File "/Users/rhea/Desktop/Rhea Code/Retail agent/app.py", line 18, in <module>
+    from agent import run_agent
+  File "/Users/rhea/Desktop/Rhea Code/Retail agent/agent.py", line 211, in <module>
+    agent_graph = build_graph()
+                  ^^^^^^^^^^^^^
+  File "/Users/rhea/Desktop/Rhea Code/Retail agent/agent.py", line 207, in build_graph
+    return graph.compile()
+           ^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/langgraph/graph/state.py", line 1113, in compile
+    self.validate(
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/langgraph/graph/state.py", line 1000, in validate
+    raise ValueError(f"Found edge starting at unknown node '{source}'")
+ValueError: Found edge starting at unknown node 'decision'

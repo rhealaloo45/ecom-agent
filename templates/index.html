@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Dynamic Pricing & Competitor Monitoring Agent – Enterprise pricing intelligence platform">
+    <title>PriceSync — Dynamic Pricing Agent</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <!-- Top Navigation -->
+    <nav class="navbar-custom">
+        <div class="nav-inner">
+            <div class="brand">
+                <div class="brand-icon"><i class="bi bi-graph-up-arrow"></i></div>
+                <span class="brand-name">PriceSync</span>
+                <span class="brand-badge">AI Agent</span>
+            </div>
+            <div class="nav-right">
+                <span class="nav-status" id="globalStatus">
+                    <span class="status-dot idle"></span>
+                    Ready
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="app-container">
+        <!-- LEFT PANEL: Products -->
+        <aside class="panel-left" id="panelLeft">
+            <div class="panel-header">
+                <h2 class="panel-title">Products</h2>
+                <span class="product-count" id="productCount">0 items</span>
+            </div>
+            <div class="product-list" id="productList">
+                <!-- Populated by JS -->
+            </div>
+        </aside>
+
+        <!-- RIGHT PANEL: Analysis -->
+        <main class="panel-right" id="panelRight">
+            <!-- Empty state -->
+            <div class="empty-state" id="emptyState">
+                <div class="empty-icon"><i class="bi bi-box-seam"></i></div>
+                <h3>Select a product</h3>
+                <p>Choose a product from the left panel to view competitor analysis and pricing recommendations.</p>
+            </div>
+
+            <!-- Product detail (hidden initially) -->
+            <div class="product-detail" id="productDetail" style="display:none;">
+                <!-- Header -->
+                <div class="detail-header">
+                    <div class="detail-info">
+                        <span class="detail-category" id="detailCategory"></span>
+                        <h1 class="detail-name" id="detailName"></h1>
+                        <div class="detail-prices">
+                            <span class="current-price" id="detailPrice"></span>
+                            <span class="cost-label">Cost: <span id="detailCost"></span></span>
+                        </div>
+                    </div>
+                    <button class="btn-check-competitors" id="btnCheck" onclick="runAgent()">
+                        <i class="bi bi-search"></i>
+                        Check Competitors
+                    </button>
+                </div>
+
+                <!-- Progress Logs -->
+                <div class="log-section" id="logSection" style="display:none;">
+                    <div class="log-header">
+                        <i class="bi bi-terminal"></i>
+                        <span>Agent Activity</span>
+                        <div class="spinner-border spinner-border-sm text-primary ms-2" id="logSpinner"></div>
+                    </div>
+                    <div class="log-body" id="logBody"></div>
+                </div>
+
+                <!-- Results Section -->
+                <div class="results-section" id="resultsSection" style="display:none;">
+
+                    <!-- Recommendation Card (prominent) -->
+                    <div class="rec-card" id="recCard">
+                        <div class="rec-header">
+                            <i class="bi bi-stars"></i>
+                            <span>AI Recommendation</span>
+                        </div>
+                        <div class="rec-body">
+                            <div class="rec-price-row">
+                                <div class="rec-price-block">
+                                    <span class="rec-label">Recommended Price</span>
+                                    <span class="rec-price" id="recPrice">—</span>
+                                </div>
+                                <div class="rec-confidence-block">
+                                    <span class="rec-label">Confidence</span>
+                                    <div class="confidence-bar">
+                                        <div class="confidence-fill" id="confFill"></div>
+                                    </div>
+                                    <span class="confidence-val" id="confVal">—</span>
+                                </div>
+                                <div class="rec-strategy-block">
+                                    <span class="rec-label">Strategy</span>
+                                    <span class="rec-strategy badge" id="recStrategy">—</span>
+                                </div>
+                            </div>
+                            <div class="rec-reasoning" id="recReasoning"></div>
+                        </div>
+                        <!-- Approval Buttons -->
+                        <div class="rec-actions" id="recActions">
+                            <button class="btn-approve" onclick="applyPrice()">
+                                <i class="bi bi-check-circle"></i> Approve & Apply Price
+                            </button>
+                            <button class="btn-reject" onclick="rejectPrice()">
+                                <i class="bi bi-x-circle"></i> Reject
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Two-column grid -->
+                    <div class="insights-grid">
+                        <!-- Competitor Table -->
+                        <div class="card-custom">
+                            <div class="card-title-row">
+                                <i class="bi bi-people"></i>
+                                <span>Competitor Prices</span>
+                                <span class="comp-count badge" id="compCount">0</span>
+                            </div>
+                            <div class="table-wrap">
+                                <table class="table-custom">
+                                    <thead>
+                                        <tr>
+                                            <th>Source</th>
+                                            <th>Price</th>
+                                            <th>Stock</th>
+                                            <th>Seller</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="compTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Demand Insights -->
+                        <div class="card-custom">
+                            <div class="card-title-row">
+                                <i class="bi bi-bar-chart-line"></i>
+                                <span>Demand Insights</span>
+                            </div>
+                            <div class="demand-grid">
+                                <div class="demand-item">
+                                    <span class="demand-label">Demand Score</span>
+                                    <span class="demand-value" id="demandScore">—</span>
+                                </div>
+                                <div class="demand-item">
+                                    <span class="demand-label">Trend</span>
+                                    <span class="demand-value" id="demandTrend">—</span>
+                                </div>
+                                <div class="demand-item">
+                                    <span class="demand-label">Review Velocity</span>
+                                    <span class="demand-value" id="demandVelocity">—</span>
+                                </div>
+                                <div class="demand-item">
+                                    <span class="demand-label">Avg Competitor</span>
+                                    <span class="demand-value" id="demandAvg">—</span>
+                                </div>
+                                <div class="demand-item">
+                                    <span class="demand-label">Competitors Found</span>
+                                    <span class="demand-value" id="demandCompCount">—</span>
+                                </div>
+                                <div class="demand-item">
+                                    <span class="demand-label">Scarcity Index</span>
+                                    <span class="demand-value" id="demandScarcity">—</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Guardrails -->
+                    <div class="card-custom guardrails-card">
+                        <div class="card-title-row">
+                            <i class="bi bi-shield-check"></i>
+                            <span>Guardrail Validation</span>
+                            <span class="badge" id="guardrailBadge">—</span>
+                        </div>
+                        <div class="guardrail-list" id="guardrailList">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=2"></script>
+</body>
+</html>
