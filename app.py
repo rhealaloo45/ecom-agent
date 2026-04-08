@@ -1,5 +1,5 @@
 """Flask API – Dynamic Pricing Agent Backend."""
-import logging, os, threading, time
+import logging, os
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -20,9 +20,6 @@ from agent import run_agent
 app = Flask(__name__)
 CORS(app)
 
-# In-memory results cache keyed by product ID
-_results_cache = {}
-_cache_lock = threading.Lock()
 _active_product_id = None
 
 
@@ -74,9 +71,6 @@ def api_run_agent():
             "error": result.get("error"),
         }
 
-        with _cache_lock:
-            _results_cache[pid] = response
-
         new_status = "Analyzed" if not result.get("error") else "Error"
         set_status(pid, new_status)
         log.info("Agent completed for %s: status=%s", pid, new_status)
@@ -87,18 +81,6 @@ def api_run_agent():
         log.error("Agent error for %s: %s", pid, e)
         set_status(pid, "Error")
         return jsonify({"error": str(e), "logs": [f"❌ {str(e)}"]}), 500
-
-
-@app.route("/results", methods=["GET"])
-def api_results():
-    pid = request.args.get("product_id")
-    if not pid:
-        return jsonify({"error": "product_id required"}), 400
-    with _cache_lock:
-        cached = _results_cache.get(pid)
-    if not cached:
-        return jsonify({"error": "No results found. Run agent first."}), 404
-    return jsonify(cached)
 
 
 @app.route("/apply-price", methods=["POST"])

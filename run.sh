@@ -1,4 +1,4 @@
-#!/bin/bash
+./run.sh#!/bin/bash
 
 # --- PriceSync Runner ---
 
