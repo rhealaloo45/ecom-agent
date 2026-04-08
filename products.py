@@ -58,15 +58,36 @@ PRODUCTS = [
 
 
 def get_products():
+    import db
     with _lock:
-        return [p.copy() for p in PRODUCTS]
+        res = []
+        for p in PRODUCTS:
+            c = p.copy()
+            try:
+                hist = db.get_price_history(c["id"])
+                if hist:
+                    c["current_price"] = hist[0]["our_price"]
+                    c["last_updated"] = hist[0]["timestamp"].replace("T", " ")[:19]
+            except Exception:
+                pass
+            res.append(c)
+        return res
 
 
 def get_product(pid):
+    import db
     with _lock:
         for p in PRODUCTS:
             if p["id"] == pid:
-                return p.copy()
+                c = p.copy()
+                try:
+                    hist = db.get_price_history(c["id"])
+                    if hist:
+                        c["current_price"] = hist[0]["our_price"]
+                        c["last_updated"] = hist[0]["timestamp"].replace("T", " ")[:19]
+                except Exception:
+                    pass
+                return c
     return None
 
 

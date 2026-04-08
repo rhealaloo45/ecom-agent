@@ -3,9 +3,16 @@
 const API = '';
 let selectedProductId = null;
 let currentResults = null;
+let historyChart = null;
+let globalNextRunDate = null;
 
 // ── Init ──
-document.addEventListener('DOMContentLoaded', loadProducts);
+document.addEventListener('DOMContentLoaded', () => {
+    loadProducts();
+    loadSchedulerStatus();
+    setInterval(loadSchedulerStatus, 60000);
+    setInterval(updateCountdownTimer, 1000);
+});
 
 async function loadProducts() {
     try {
@@ -69,6 +76,7 @@ function showProductDetail(p) {
     document.getElementById('detailName').textContent = p.name;
     document.getElementById('detailPrice').textContent = `₹${fmt(p.current_price)}`;
     document.getElementById('detailCost').textContent = `₹${fmt(p.cost_price)}`;
+    loadPriceHistory(p.id);
 }
 
 // ── Run Agent ──
@@ -114,7 +122,7 @@ async function runAgent() {
         const res = await fetch(`${API}/run-agent`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ product_id: selectedProductId })
+            body: JSON.stringify({ product_id: selectedProductId, run_type: 'manual' })
         });
 
         clearInterval(logInterval);
@@ -133,8 +141,12 @@ async function runAgent() {
         } else {
             currentResults = data;
             displayResults(data);
+            loadPriceHistory(selectedProductId);
             setGlobalStatus('idle', 'Ready');
             showToast('Analysis complete', 'success');
+            if (data.google_task_created) {
+                showToast('Task created in Google Tasks ✓', 'success');
+            }
         }
     } catch (e) {
         clearInterval(logInterval);
@@ -263,6 +275,154 @@ async function applyPrice() {
 function rejectPrice() {
     document.getElementById('recActions').style.display = 'none';
     showToast('Recommendation rejected', 'info');
+}
+
+async function loadSchedulerStatus() {
+    try {
+        const res = await fetch(`${API}/scheduler-status`);
+        const status = await res.json();
+        
+        const lastRuns = status.last_run_times || {};
+        const lastRunTimestamps = Object.values(lastRuns);
+        const lastRun = lastRunTimestamps.length ? lastRunTimestamps[0] : null;
+        if (lastRun) {
+            const timeStr = new Date(lastRun).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            document.getElementById('lastRunTimer').textContent = `Last run: ${timeStr}`;
+        } else {
+            document.getElementById('lastRunTimer').textContent = 'Last run: none yet';
+        }
+
+        globalNextRunDate = status.next_run_time ? new Date(status.next_run_time) : null;
+        updateCountdownTimer();
+    } catch (e) {
+        globalNextRunDate = null;
+    }
+}
+
+function updateCountdownTimer() {
+    const el = document.getElementById('countdownTimer');
+    if (!el) return;
+    
+    if (!globalNextRunDate) {
+        el.textContent = '--:--:--';
+        return;
+    }
+    
+    const diffMs = globalNextRunDate - new Date();
+    if (diffMs <= 0) {
+        el.textContent = 'Running...';
+    } else {
+        const h = Math.floor(diffMs / 3600000).toString().padStart(2, '0');
+        const m = Math.floor((diffMs % 3600000) / 60000).toString().padStart(2, '0');
+        const s = Math.floor((diffMs % 60000) / 1000).toString().padStart(2, '0');
+        el.textContent = `${h}:${m}:${s}`;
+    }
+}
+
+async function loadPriceHistory(productId) {
+    const chartContainer = document.getElementById('historyCard');
+    const chartCanvas = document.getElementById('priceHistoryChart');
+    const emptyNotice = document.getElementById('historyEmpty');
+    if (!productId) {
+        chartContainer.style.display = 'none';
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API}/price-history/${productId}`);
+        const data = await res.json();
+        chartContainer.style.display = 'block';
+
+        if (!data.length) {
+            if (historyChart) {
+                historyChart.destroy();
+                historyChart = null;
+            }
+            chartCanvas.style.display = 'none';
+            emptyNotice.style.display = 'block';
+            return;
+        }
+
+        emptyNotice.style.display = 'none';
+        chartCanvas.style.display = 'block';
+
+        const ordered = data.slice().reverse();
+        const labels = ordered.map(item => new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        const ourPrices = ordered.map(item => item.our_price);
+        const competitorAverages = ordered.map(item => item.competitor_avg_price || null);
+
+        if (historyChart) {
+            historyChart.destroy();
+        }
+
+        historyChart = new Chart(chartCanvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'Our Price',
+                        data: ourPrices,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59,130,246,0.1)',
+                        tension: 0.3,
+                        pointRadius: 2,
+                        borderWidth: 2,
+                    },
+                    {
+                        label: 'Competitor Avg',
+                        data: competitorAverages,
+                        borderColor: '#f97316',
+                        borderDash: [6, 4],
+                        backgroundColor: 'rgba(249,115,22,0.08)',
+                        tension: 0.3,
+                        pointRadius: 2,
+                        borderWidth: 2,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        display: false,
+                    },
+                    y: {
+                        display: true,
+                        ticks: { color: '#6b7280' },
+                        grid: { color: 'rgba(148,163,184,0.12)' },
+                    },
+                },
+                plugins: {
+                    legend: { display: true, labels: { color: '#374151' } },
+                    tooltip: { mode: 'index', intersect: false },
+                },
+            },
+        });
+    } catch (e) {
+        chartContainer.style.display = 'block';
+        chartCanvas.style.display = 'none';
+        emptyNotice.style.display = 'block';
+    }
+}
+
+function connectGoogleTasks() {
+    window.open(`${API}/auth/google`, '_blank');
+}
+
+async function sendNotifyTest() {
+    try {
+        const res = await fetch(`${API}/notify-test`);
+        const payload = await res.json();
+        if (payload.message) {
+            showToast(payload.message, 'success');
+        } else {
+            showToast(payload.error || 'Notification test failed', 'error');
+        }
+    } catch (e) {
+        showToast('Notification test failed', 'error');
+    }
 }
 
 // ── Utilities ──
