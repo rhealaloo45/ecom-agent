@@ -78,5 +78,4 @@ def analyze_demand(product_name: str, product_price: float,
         "demand_score": demand_score,
         "trend": trend,
         "signals": signals,
-        "review_velocity": "High" if demand_score > 0.7 else ("Medium" if demand_score > 0.4 else "Low"),
     }

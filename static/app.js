@@ -42,6 +42,10 @@ async function selectProduct(pid) {
     const card = document.getElementById(`pc-${pid}`);
     if (card) card.classList.add('active');
 
+    // Clear previous results display
+    document.getElementById('resultsSection').style.display = 'none';
+    document.getElementById('logSection').style.display = 'none';
+
     try {
         const res = await fetch(`${API}/select_product`, {
             method: 'POST',
@@ -50,15 +54,6 @@ async function selectProduct(pid) {
         });
         const product = await res.json();
         showProductDetail(product);
-
-        // Try loading cached results
-        try {
-            const rr = await fetch(`${API}/results?product_id=${pid}`);
-            if (rr.ok) {
-                currentResults = await rr.json();
-                displayResults(currentResults);
-            }
-        } catch (_) {}
     } catch (e) {
         showToast('Failed to select product', 'error');
     }
@@ -164,7 +159,7 @@ function displayResults(data) {
     document.getElementById('compCount').textContent = competitors.length;
 
     if (competitors.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">No competitor data scraped. Sites may be blocking requests.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">No competitor data scraped. Sites may be blocking requests.</td></tr>';
     } else {
         tbody.innerHTML = competitors.map(c => {
             const stockClass = c.stock_status?.toLowerCase().includes('low') ? 'low-stock' :
@@ -174,6 +169,7 @@ function displayResults(data) {
                 <td class="price-cell">₹${fmt(c.price)}</td>
                 <td><span class="stock-badge ${stockClass}">${esc(c.stock_status)}</span></td>
                 <td>${esc(c.seller_type || '')}</td>
+                <td><a href="${esc(c.url || '#')}" target="_blank" class="btn btn-sm btn-outline-primary">View</a></td>
             </tr>`;
         }).join('');
     }
@@ -198,28 +194,35 @@ function displayResults(data) {
     document.getElementById('confFill').style.width = `${(conf * 100).toFixed(0)}%`;
     document.getElementById('confVal').textContent = `${(conf * 100).toFixed(0)}%`;
     document.getElementById('recStrategy').textContent = rec.strategy || '—';
-    document.getElementById('recReasoning').textContent = rec.reasoning || 'No reasoning provided.';
+    const sourceText = rec.source === 'local_ai' ? 'Local AI' : rec.source === 'fallback' ? 'Fallback / Heuristic' : rec.source === 'error' ? 'Error / Unavailable' : 'LLM / AI Model';
+    document.getElementById('recSource').textContent = sourceText;
+    document.getElementById('recReasoning').textContent = rec.error || rec.reasoning || 'No reasoning provided.';
 
     // Guardrails
     const gr = data.guardrail_results || {};
     const rules = gr.rules || {};
     const allPass = gr.all_pass;
     const guardrailBadge = document.getElementById('guardrailBadge');
-    guardrailBadge.textContent = allPass ? 'All Passed' : 'Issues Found';
-    guardrailBadge.className = `badge ${allPass ? 'bg-success' : 'bg-warning text-dark'}`;
-
     const guardrailList = document.getElementById('guardrailList');
-    guardrailList.innerHTML = Object.entries(rules).map(([key, rule]) => `
-        <div class="guardrail-item">
-            <div class="guardrail-icon ${rule.pass ? 'pass' : 'fail'}">
-                <i class="bi ${rule.pass ? 'bi-check' : 'bi-x'}"></i>
+    if (recPrice) {
+        guardrailBadge.textContent = allPass ? 'All Passed' : 'Issues Found';
+        guardrailBadge.className = `badge ${allPass ? 'bg-success' : 'bg-warning text-dark'}`;
+        guardrailList.innerHTML = Object.entries(rules).map(([key, rule]) => `
+            <div class="guardrail-item">
+                <div class="guardrail-icon ${rule.pass ? 'pass' : 'fail'}">
+                    <i class="bi ${rule.pass ? 'bi-check' : 'bi-x'}"></i>
+                </div>
+                <div class="guardrail-info">
+                    <div class="guardrail-label">${esc(rule.label)}</div>
+                    <div class="guardrail-detail">${esc(rule.detail)}</div>
+                </div>
             </div>
-            <div class="guardrail-info">
-                <div class="guardrail-label">${esc(rule.label)}</div>
-                <div class="guardrail-detail">${esc(rule.detail)}</div>
-            </div>
-        </div>
-    `).join('');
+        `).join('');
+    } else {
+        guardrailBadge.textContent = 'N/A';
+        guardrailBadge.className = 'badge bg-secondary';
+        guardrailList.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px;">No price recommendation to validate.</div>';
+    }
 
     // Show/hide approval buttons
     document.getElementById('recActions').style.display = recPrice ? 'flex' : 'none';

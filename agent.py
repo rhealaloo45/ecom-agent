@@ -82,19 +82,26 @@ def pricing_node(state: AgentState) -> AgentState:
         state["product"], state["competitor_data"], state["demand"]
     )
     rec = state.get("recommendation") or {}
-    rec_price = rec.get('recommended_price', 'N/A')
-    _log(state, f"💰 AI recommends: ₹{rec_price:,} "
-               f"(confidence: {rec.get('confidence', 0):.0%})")
+    rec_price = rec.get('recommended_price')
+    if rec_price is not None:
+        _log(state, f"💰 AI recommends: ₹{rec_price:,.0f} "
+                   f"(confidence: {rec.get('confidence', 0):.0%})")
+    else:
+        _log(state, f"💰 AI pricing unavailable: {rec.get('reasoning', 'No recommendation')}")
     return state
 
 
 # ── Node 6: Guardrail Validation ──
 def guardrail_node(state: AgentState) -> AgentState:
     _log(state, "🛡️ Validating guardrails...")
-    rec_price = state["recommendation"].get("recommended_price", state["product"]["current_price"])
-    state["guardrail_results"] = validate(state["product"], rec_price)
-    status = "✅ All passed" if state["guardrail_results"]["all_pass"] else "⚠️ Some rules violated"
-    _log(state, f"🛡️ Guardrails: {status}")
+    rec_price = state["recommendation"].get("recommended_price")
+    if rec_price is None:
+        _log(state, "🛡️ Guardrails: Skipped (no recommendation)")
+        state["guardrail_results"] = {"rules": {}, "all_pass": True}
+    else:
+        state["guardrail_results"] = validate(state["product"], rec_price)
+        status = "✅ All passed" if state["guardrail_results"]["all_pass"] else "⚠️ Some rules violated"
+        _log(state, f"🛡️ Guardrails: {status}")
     return state
 
 
@@ -130,6 +137,16 @@ def decision_node(state: AgentState) -> AgentState:
             "strategy": rec.get("strategy", "hold"),
         }
         _log(state, f"⚠️ Adjusted price to ₹{safe_price:,.0f} for guardrail compliance")
+    elif rec.get("recommended_price") is None:
+        # No AI recommendation available
+        state["final_decision"] = {
+            "recommended_price": None,
+            "adjusted": False,
+            "reasoning": rec.get("reasoning", "AI pricing unavailable"),
+            "confidence": 0.0,
+            "strategy": "hold",
+        }
+        _log(state, "⚠️ No AI recommendation available")
     else:
         state["final_decision"] = {
             "recommended_price": rec.get("recommended_price", current),
@@ -139,10 +156,11 @@ def decision_node(state: AgentState) -> AgentState:
             "strategy": rec.get("strategy", "competitive"),
         }
 
-    # Add percent change
-    final_price = state["final_decision"].get("recommended_price", current)
-    delta_pct = ((final_price - current) / current) * 100
-    state["final_decision"]["delta_pct"] = round(delta_pct, 1)
+    # Add percent change if price is available
+    final_price = state["final_decision"].get("recommended_price")
+    if final_price is not None:
+        delta_pct = ((final_price - current) / current) * 100
+        state["final_decision"]["delta_pct"] = round(delta_pct, 1)
 
     return state
 
@@ -168,6 +186,8 @@ def route_decision(state: AgentState) -> str:
     gr = state.get("guardrail_results") or {}
     rec = state.get("recommendation") or {}
     
+    if rec.get("recommended_price") is None:
+        return "human_review"
     if not gr.get("all_pass", False):
         return "human_review"
     if rec.get("confidence", 0) < 0.7:
