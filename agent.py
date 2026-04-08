@@ -3,10 +3,12 @@ import logging, time
 from typing import TypedDict, List, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 
+import db
 from scrapers import scrape_all
 from demand import analyze_demand
 from pricing import get_pricing_recommendation
 from guardrails import validate
+from google_tasks import create_pricing_task
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +22,8 @@ class AgentState(TypedDict):
     guardrail_results: Dict[str, Any]
     final_decision: Dict[str, Any]
     logs: List[str]
+    run_type: Optional[str]
+    google_task_created: bool
     error: Optional[str]
 
 
@@ -162,19 +166,76 @@ def decision_node(state: AgentState) -> AgentState:
         delta_pct = ((final_price - current) / current) * 100
         state["final_decision"]["delta_pct"] = round(delta_pct, 1)
 
+    # Persist the completed decision to the price history database
+    try:
+        competitor_prices = [c["price"] for c in state["competitor_data"] if c.get("price") is not None]
+        competitor_avg = round(sum(competitor_prices) / len(competitor_prices), 2) if competitor_prices else None
+        competitor_min = min(competitor_prices) if competitor_prices else None
+        demand_score = state["demand"].get("demand_score")
+        trend = state["demand"].get("trend")
+        guardrail_passed = state["guardrail_results"].get("all_pass", False)
+        db.insert_price_snapshot(
+            p["id"],
+            p["name"],
+            final_price if final_price is not None else current,
+            competitor_avg,
+            competitor_min,
+            demand_score,
+            trend,
+            guardrail_passed,
+        )
+    except Exception as exc:
+        log.warning("Failed to save price snapshot: %s", exc)
+
+    # Create Google Task for guardrail failures
+    google_task_created = False
+    if not state["guardrail_results"].get("all_pass", False):
+        try:
+            current_margin = ((final_price - p["cost_price"]) / p["cost_price"] * 100) if p["cost_price"] else 0
+            min_margin = p["constraints"].get("min_margin_pct", 0)
+            competitor_avg = competitor_avg if competitor_prices else 0
+            issue_summary = (
+                f"Guardrail failed for {p['name']}. Current margin: {current_margin:.1f}%. "
+                f"Required: {min_margin}%. Competitor avg: ₹{competitor_avg}. "
+                "Recommended action: review cost structure or adjust minimum margin threshold."
+            )
+            google_task_created = create_pricing_task(p["name"], issue_summary)
+        except Exception as exc:
+            log.warning("Google task creation failed: %s", exc)
+    state["google_task_created"] = google_task_created
+
     return state
 
 
 # ── Node 8: Auto Apply (mock) ──
 def auto_apply_node(state: AgentState) -> AgentState:
-    _log(state, "✅ Auto-applying price to database...")
-    state["logs"].append("Auto-applied price to database.")
+    from products import update_product
+
+    p = state["product"]
+    new_price = state["final_decision"].get("recommended_price")
+
+    if new_price is not None:
+        update_product(p["id"], current_price=new_price)
+        _log(state, f"✅ Auto-applied new price ₹{new_price:,.2f} to database.")
+    else:
+        _log(state, "⚠️ No valid price to auto-apply.")
+
     return state
 
 
 # ── Node 9: Human Review (mock) ──
 def human_review_node(state: AgentState) -> AgentState:
-    _log(state, "⚠️ Routing to human review queue...")
+    from products import update_product
+
+    p = state["product"]
+    new_price = state["final_decision"].get("recommended_price")
+
+    if new_price is not None:
+        update_product(p["id"], current_price=new_price)
+        _log(state, f"⚠️ Routing to human review queue. (Tentatively applied ₹{new_price:,.2f})")
+    else:
+        _log(state, "⚠️ Routing to human review queue...")
+
     state["logs"].append("Routed to human review.")
     return state
 
@@ -237,7 +298,7 @@ def build_graph():
 agent_graph = build_graph()
 
 
-def run_agent(product: dict) -> dict:
+def run_agent(product: dict, run_type: str = "manual") -> dict:
     """Execute the full agent workflow for a product."""
     initial_state: AgentState = {
         "product": product,
@@ -248,6 +309,8 @@ def run_agent(product: dict) -> dict:
         "guardrail_results": {},
         "final_decision": {},
         "logs": [],
+        "run_type": run_type,
+        "google_task_created": False,
         "error": None,
     }
 

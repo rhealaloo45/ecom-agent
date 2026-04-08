@@ -19,11 +19,20 @@
                 <span class="brand-name">PriceSync</span>
                 <span class="brand-badge">AI Agent</span>
             </div>
-            <div class="nav-right">
-                <span class="nav-status" id="globalStatus">
-                    <span class="status-dot idle"></span>
-                    Ready
-                </span>
+            <div class="nav-right" style="display: flex; align-items: center; gap: 16px;">
+                <div class="scheduler-actions" style="display: flex; gap: 8px; align-items: center; border-right: 1px solid var(--border); padding-right: 16px;">
+                    <button class="btn-scheduler" id="btnRunNow" onclick="runAgent()">Run Now</button>
+                    <button class="btn-scheduler-outline" id="btnGoogleTasks" onclick="connectGoogleTasks()">Connect Google Tasks</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-secondary);">
+                    <span class="nav-status" id="globalStatus" style="min-width: unset; padding: 0; background: transparent;">
+                        <span class="status-dot idle"></span> Ready
+                    </span>
+                    <span>-</span>
+                    <span id="countdownTimer" style="font-variant-numeric: tabular-nums; font-weight: 600;">--:--:--</span>
+                    <span>-</span>
+                    <span id="lastRunTimer" style="color: var(--text-muted);">Last run: --</span>
+                </div>
             </div>
         </div>
     </nav>
@@ -67,14 +76,27 @@
                     </button>
                 </div>
 
-                <!-- Progress Logs -->
-                <div class="log-section" id="logSection" style="display:none;">
-                    <div class="log-header">
-                        <i class="bi bi-terminal"></i>
-                        <span>Agent Activity</span>
-                        <div class="spinner-border spinner-border-sm text-primary ms-2" id="logSpinner"></div>
+                <div class="dashboard-top-row">
+                    <div class="history-card card-custom flex-grow-1" id="historyCard" style="display:none;">
+                        <div class="card-title-row">
+                            <i class="bi bi-graph-up"></i>
+                            <span>Price History</span>
+                        </div>
+                        <div class="history-body">
+                            <canvas id="priceHistoryChart" height="180"></canvas>
+                            <div class="history-empty" id="historyEmpty">No history yet.</div>
+                        </div>
                     </div>
-                    <div class="log-body" id="logBody"></div>
+
+                    <!-- Progress Logs -->
+                    <div class="log-section flex-grow-1" id="logSection" style="display:none;">
+                        <div class="log-header">
+                            <i class="bi bi-terminal"></i>
+                            <span>Agent Activity</span>
+                            <div class="spinner-border spinner-border-sm text-primary ms-2" id="logSpinner"></div>
+                        </div>
+                        <div class="log-body" id="logBody"></div>
+                    </div>
                 </div>
 
                 <!-- Results Section -->
@@ -197,6 +219,7 @@
         </main>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="{{ url_for('static', filename='app.js') }}?v=2"></script>
 </body>

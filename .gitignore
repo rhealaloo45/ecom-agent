@@ -214,3 +214,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# PriceSync specific files
+pricesync.db
+credentials.json
+token.json
