@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PriceSync — Catalog Sync</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            overflow-y: auto; /* override global style.css */
+            height: auto;
+        }
+        .page-container {
+            padding: 20px 40px;
+            max-width: 1400px;
+            margin: 80px auto 40px;
+        }
+        .header-box {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            gap: 16px;
+        }
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+        }
+        .product-card-import {
+            background: var(--bg-card, #fff);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            flex-direction: row;
+            gap: 16px;
+            align-items: stretch;
+            height: 220px;
+            transition: all 0.2s;
+            overflow: hidden;
+        }
+        .product-card-import:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            border-color: var(--blue-100);
+        }
+        .product-image-container {
+            flex: 0 0 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f8f9fa;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .product-card-import img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .product-details {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .product-card-import .title {
+            font-weight: 700;
+            font-size: 18px;
+            margin-bottom: 4px;
+            color: var(--text-primary);
+        }
+        .product-card-import .price {
+            font-size: 20px;
+            color: var(--green-600);
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .product-card-import .category {
+            font-size: 13px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
+        }
+        .product-actions {
+            margin-top: auto;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar-custom">
+        <div class="nav-inner">
+            <div class="brand">
+                <div class="brand-icon"><i class="bi bi-graph-up-arrow"></i></div>
+                <span class="brand-name">PriceSync</span>
+            </div>
+            <div class="nav-right">
+                <a href="/" class="btn btn-outline-secondary btn-sm">Back to Dashboard</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="page-container">
+        <div class="header-box">
+            <h2>Product Catalog</h2>
+            <div class="header-actions">
+                <select id="categoryFilter" class="form-select" onchange="filterCatalog()" style="width: 250px;">
+                    <option value="All">All Categories</option>
+                </select>
+                
+                <div class="dropdown">
+                    <button class="btn btn-primary dropdown-toggle" type="button" id="storeSelector" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-shop"></i> <span id="selectedStoreLabel">Choose Product Store</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0" aria-labelledby="storeSelector">
+                        <li><a class="dropdown-item py-2" href="#" onclick="switchStore('free_api', 'Free E-commerce API')">
+                            <i class="bi bi-cloud-arrow-down me-2"></i> Free E-commerce API
+                        </a></li>
+                        <li><a class="dropdown-item py-2" href="#" onclick="switchStore('platzi', 'Platzi Fake Store')">
+                            <i class="bi bi-shop-window me-2"></i> Platzi Fake Store (Reliable)
+                        </a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item py-2 text-muted" href="#" onclick="loadCatalog()">
+                            <i class="bi bi-shuffle me-2"></i> Show All Sources
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="product-grid" id="catalogGrid">
+            <div style="grid-column: 1/-1; text-align: center; padding: 100px; color: #666;">
+                <i class="bi bi-arrow-up-circle" style="font-size: 40px; display: block; margin-bottom: 10px;"></i>
+                Choose a product store above to load catalog items.
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let allProducts = [];
+
+        async function loadCatalog() {
+            document.getElementById('catalogGrid').innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 100px;"><span class="spinner-border text-primary"></span></div>';
+            document.getElementById('selectedStoreLabel').textContent = 'All Sources';
+            try {
+                const res = await fetch('/api/products-from-sources');
+                const data = await res.json();
+                allProducts = data.products || [];
+                populateCategories(allProducts);
+                filterCatalog();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function switchStore(platform, label) {
+            const btn = document.getElementById('storeSelector');
+            const labelSpan = document.getElementById('selectedStoreLabel');
+            const originalLabel = labelSpan.textContent;
+            
+            labelSpan.textContent = `Syncing ${label}...`;
+            btn.disabled = true;
+            document.getElementById('catalogGrid').innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 100px;"><span class="spinner-border text-primary"></span><div class="mt-3 text-muted">Synchronizing with ' + label + '...</div></div>';
+
+            let syncError = null;
+
+            try {
+                const syncRes = await fetch('/api/sync-platform', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ platform: platform, limit: 40 })
+                });
+                const syncData = await syncRes.json();
+                if (syncData.error) syncError = syncData.error;
+            } catch (e) {
+                console.error("Sync error:", e);
+                syncError = e.message;
+            }
+
+            // ALWAYS try to load from DB even if sync failed
+            try {
+                const res = await fetch(`/api/products-from-sources?platform=${platform}`);
+                const data = await res.json();
+                allProducts = data.products || [];
+                
+                labelSpan.textContent = label;
+                populateCategories(allProducts);
+                filterCatalog();
+
+                if (syncError) {
+                    const toast = document.createElement('div');
+                    toast.className = 'position-fixed top-0 start-50 translate-middle-x p-3';
+                    toast.style.zIndex = '1100';
+                    toast.innerHTML = `<div class="alert alert-warning shadow border-0 p-3">
+                        <i class="bi bi-exclamation-triangle me-2"></i> 
+                        Sync failed (${syncError}), showing cached products.
+                    </div>`;
+                    document.body.appendChild(toast);
+                    setTimeout(() => toast.remove(), 4000);
+                }
+            } catch (e) {
+                alert('Failed to load from database: ' + e.message);
+                labelSpan.textContent = originalLabel;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function populateCategories(products) {
+            const select = document.getElementById('categoryFilter');
+            const categories = new Set();
+            products.forEach(p => {
+                if (p.category) categories.add(p.category);
+            });
+            const currentVal = select.value;
+            select.innerHTML = '<option value="All">All Categories</option>';
+            Array.from(categories).sort().forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c;
+                opt.textContent = c;
+                select.appendChild(opt);
+            });
+            if (categories.has(currentVal)) {
+                select.value = currentVal;
+            }
+        }
+
+        function filterCatalog() {
+            const select = document.getElementById('categoryFilter');
+            const cat = select.value;
+            if (cat === 'All') {
+                renderCatalog(allProducts);
+            } else {
+                const filtered = allProducts.filter(p => p.category === cat);
+                renderCatalog(filtered);
+            }
+        }
+
+        function renderCatalog(products) {
+            const grid = document.getElementById('catalogGrid');
+            if (products.length === 0) {
+                grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 100px; color: #666;">
+                    <i class="bi bi-exclamation-circle" style="font-size: 30px; display: block; margin-bottom: 10px;"></i>
+                    No products found for this source.
+                </div>`;
+                return;
+            }
+            grid.innerHTML = products.map(p => `
+                <div class="product-card-import">
+                    <div class="product-image-container">
+                        <img src="${p.image_url || 'https://via.placeholder.com/160?text=No+Image'}" alt="${p.product_name}">
+                    </div>
+                    <div class="product-details">
+                        <div class="title" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 15px;">${p.product_name}</div>
+                        <div class="price">₹${parseFloat(p.current_price).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                        <div class="category">${p.category}</div>
+                        <div class="product-actions">
+                            <button class="btn btn-outline-primary btn-sm" onclick="addToMain('${p.external_id}', '${p.platform}')">
+                                <i class="bi bi-plus-lg"></i> Add to Tracker
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function addToMain(externalId, platform) {
+            try {
+                const res = await fetch('/api/add-to-tracker', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ external_id: externalId, platform: platform })
+                });
+                const data = await res.json();
+                if (data.error) alert(data.error);
+                else {
+                    const toast = document.createElement('div');
+                    toast.className = 'position-fixed bottom-0 end-0 p-3';
+                    toast.style.zIndex = '1100';
+                    toast.innerHTML = `<div class="alert alert-success shadow">Added to tracker!</div>`;
+                    document.body.appendChild(toast);
+                    setTimeout(() => toast.remove(), 2000);
+                }
+            } catch (e) {
+                alert('Error adding to tracker: ' + e);
+            }
+        }
+
+        // Initial setup - don't load everything immediately, let user choose
+        // document.addEventListener('DOMContentLoaded', loadCatalog);
+    </script>
+</body>
+</html>

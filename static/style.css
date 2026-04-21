@@ -305,6 +305,46 @@ body {
     margin-top: 6px;
 }
 
+/* Remove Button */
+.product-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.pc-content {
+    flex: 1;
+    min-width: 0;
+}
+.btn-remove {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: all var(--transition);
+    flex-shrink: 0;
+}
+.product-card:hover .btn-remove {
+    opacity: 1;
+}
+.btn-remove:hover {
+    background: var(--red-50);
+    color: var(--red-600);
+}
+.product-card.active .btn-remove {
+    color: var(--blue-600);
+}
+.product-card.active .btn-remove:hover {
+    background: var(--red-100);
+    color: var(--red-600);
+}
+
 /* ── Right Panel ── */
 .panel-right {
     flex: 1;
@@ -776,4 +816,24 @@ body {
 @keyframes toastOut {
     from { opacity: 1; }
     to { opacity: 0; }
+}
+
+/* ── Seasonal Insights ── */
+.seasonal-body {
+    display: flex;
+    flex-direction: column;
+}
+.seasonal-multiplier-box {
+    transition: all var(--transition);
+}
+.seasonal-multiplier-box:hover {
+    background: rgba(59, 130, 246, 0.08) !important;
+    transform: scale(1.02);
+}
+#seasonalPeakBadge {
+    animation: bounce 2s infinite;
+}
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
 }

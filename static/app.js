@@ -10,7 +10,9 @@ let globalNextRunDate = null;
 document.addEventListener('DOMContentLoaded', () => {
     loadProducts();
     loadSchedulerStatus();
+    loadSeasonalData();
     setInterval(loadSchedulerStatus, 60000);
+    setInterval(loadSeasonalData, 300000); // 5 mins
     setInterval(updateCountdownTimer, 1000);
 });
 
@@ -30,14 +32,49 @@ function renderProductList(products) {
     list.innerHTML = products.map(p => `
         <div class="product-card ${p.id === selectedProductId ? 'active' : ''}"
              id="pc-${p.id}" onclick="selectProduct('${p.id}')">
-            <div class="pc-name">${esc(p.name)}</div>
-            <div class="pc-meta">
-                <span class="pc-price">₹${fmt(p.current_price)}</span>
-                <span class="pc-status ${p.status.toLowerCase()}">${p.status}</span>
+            <div class="pc-content">
+                <div class="pc-name">${esc(p.name)}</div>
+                <div class="pc-meta">
+                    <span class="pc-price">₹${fmt(p.current_price)}</span>
+                    <span class="pc-status ${p.status.toLowerCase()}">${p.status}</span>
+                </div>
+                ${p.last_updated ? `<div class="pc-updated">Updated ${p.last_updated}</div>` : ''}
             </div>
-            ${p.last_updated ? `<div class="pc-updated">Updated ${p.last_updated}</div>` : ''}
+            <button class="btn-remove" onclick="event.stopPropagation(); confirmRemove('${p.id}', '${esc(p.name)}')">
+                <i class="bi bi-trash"></i>
+            </button>
         </div>
     `).join('');
+}
+
+function confirmRemove(pid, name) {
+    if (confirm(`Are you sure you want to remove "${name}" from the tracker?`)) {
+        removeProduct(pid);
+    }
+}
+
+async function removeProduct(pid) {
+    try {
+        const res = await fetch(`${API}/api/remove-product`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ product_id: pid })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            showToast('Product removed', 'success');
+            if (selectedProductId === pid) {
+                selectedProductId = null;
+                document.getElementById('productDetail').style.display = 'none';
+                document.getElementById('emptyState').style.display = 'block';
+            }
+            loadProducts();
+        } else {
+            showToast(data.error || 'Failed to remove product', 'error');
+        }
+    } catch (e) {
+        showToast('Error removing product', 'error');
+    }
 }
 
 async function selectProduct(pid) {
@@ -103,8 +140,6 @@ async function runAgent() {
     const fakeLogs = [
         '📦 Loading product details...',
         '🔍 Scraping Amazon...',
-        '🔍 Scraping Flipkart...',
-        '🔍 Scraping Google Shopping...',
         '📊 Analyzing demand signals...',
         '🤖 Running AI pricing strategy...',
         '🛡️ Validating guardrails...',
@@ -161,6 +196,24 @@ async function runAgent() {
     loadProducts(); // Refresh statuses
 }
 
+async function runAllAgents() {
+    const btn = document.getElementById('btnRunNow');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Triggering...';
+
+    try {
+        await fetch(`${API}/run-all`, { method: 'POST' });
+        showToast('Background scheduler launched for all products.', 'success');
+        setTimeout(loadSchedulerStatus, 500);
+    } catch (e) {
+        showToast('Failed to trigger background scheduler', 'error');
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+}
+
 function displayResults(data) {
     const section = document.getElementById('resultsSection');
     section.style.display = 'block';
@@ -195,6 +248,7 @@ function displayResults(data) {
     document.getElementById('demandAvg').textContent = signals.avg_competitor_price ? `₹${fmt(signals.avg_competitor_price)}` : '—';
     document.getElementById('demandCompCount').textContent = signals.competitor_count ?? '—';
     document.getElementById('demandScarcity').textContent = signals.scarcity_index ?? '—';
+    document.getElementById('demandReasoning').textContent = demand.demand_reasoning || 'No specific reasoning provided.';
 
     // Recommendation
     const rec = data.recommendation || {};
@@ -234,6 +288,21 @@ function displayResults(data) {
         guardrailBadge.textContent = 'N/A';
         guardrailBadge.className = 'badge bg-secondary';
         guardrailList.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px;">No price recommendation to validate.</div>';
+    }
+
+    // Suggested Alternatives
+    const altsCard = document.getElementById('suggestedAltsCard');
+    const altsContainer = document.getElementById('suggestedAltsContainer');
+    const alternatives = data.suggested_alternatives || [];
+    
+    if (alternatives.length > 0) {
+        altsCard.style.display = 'block';
+        altsContainer.innerHTML = alternatives.map(alt => 
+            `<span class="badge border text-dark bg-light" style="padding: 8px 12px; font-weight: 500; font-size: 13px;"><i class="bi bi-search me-1 text-primary"></i> ${esc(alt)}</span>`
+        ).join('');
+    } else {
+        altsCard.style.display = 'none';
+        altsContainer.innerHTML = '';
     }
 
     // Show/hide approval buttons
@@ -466,4 +535,32 @@ function showToast(msg, type = 'info') {
     toast.innerHTML = `<i class="bi ${icon}"></i> ${esc(msg)}`;
     container.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
+}
+async function loadSeasonalData() {
+    try {
+        const res = await fetch(`${API}/api/seasonal`);
+        const data = await res.json();
+        
+        const statusEl = document.getElementById('seasonalStatus');
+        const listEl = document.getElementById('seasonalEvents');
+        const multEl = document.getElementById('seasonalMultiplier');
+        const badge = document.getElementById('seasonalPeakBadge');
+
+        if (!statusEl) return;
+
+        multEl.textContent = `${data.peak_multiplier.toFixed(2)}x`;
+        badge.style.display = data.is_peak ? 'inline-block' : 'none';
+        
+        if (data.is_peak) {
+            statusEl.textContent = "Peak Shopping Period Detected";
+            statusEl.style.color = "var(--accent)";
+        } else {
+            statusEl.textContent = "Standard Market Demand";
+            statusEl.style.color = "var(--text-primary)";
+        }
+
+        listEl.textContent = data.context_str || "No major seasonal events identified.";
+    } catch (e) {
+        console.error("Seasonal data load failed", e);
+    }
 }

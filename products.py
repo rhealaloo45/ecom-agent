@@ -1,7 +1,10 @@
-"""Product data store with seed products."""
-import threading, time
+import threading, time, json, sqlite3
+from typing import List, Dict, Any, Optional
 
+# Shared lock for synchronization if needed, though SQLite handles its own
 _lock = threading.Lock()
+# We'll use the DB_PATH from db.py
+from db import DB_PATH, get_connection, get_price_history
 
 PRODUCTS = [
     {
@@ -57,56 +60,139 @@ PRODUCTS = [
 ]
 
 
-def get_products():
-    import db
-    with _lock:
+def _ensure_seed_products():
+    """Ensure hardcoded seed products exist in the database."""
+    conn = get_connection()
+    try:
+        with conn:
+            cur = conn.execute("SELECT COUNT(*) FROM tracked_products")
+            if cur.fetchone()[0] == 0:
+                for p in PRODUCTS:
+                    conn.execute(
+                        """INSERT INTO tracked_products (id, name, current_price, cost_price, category, status, constraints_json, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (p["id"], p["name"], p["current_price"], p["cost_price"], p["category"], p["status"], 
+                         json.dumps(p["constraints"]), time.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                    )
+    finally:
+        conn.close()
+
+def get_products() -> List[Dict[str, Any]]:
+    _ensure_seed_products()
+    conn = get_connection()
+    try:
+        with conn:
+            cur = conn.execute("SELECT * FROM tracked_products")
+            rows = cur.fetchall()
         res = []
-        for p in PRODUCTS:
-            c = p.copy()
+        for row in rows:
+            p = dict(row)
+            p["constraints"] = json.loads(p["constraints_json"])
+            # Mix in latest price from history
             try:
-                hist = db.get_price_history(c["id"])
+                hist = get_price_history(p["id"])
                 if hist:
-                    c["current_price"] = hist[0]["our_price"]
-                    c["last_updated"] = hist[0]["timestamp"].replace("T", " ")[:19]
+                    p["current_price"] = hist[0]["our_price"]
+                    p["last_updated"] = hist[0]["timestamp"].replace("T", " ")[:19]
             except Exception:
                 pass
-            res.append(c)
+            res.append(p)
         return res
+    finally:
+        conn.close()
 
+def get_product(pid: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        cur = conn.execute("SELECT * FROM tracked_products WHERE id = ?", (pid,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        p = dict(row)
+        p["constraints"] = json.loads(p["constraints_json"])
+        try:
+            hist = get_price_history(p["id"])
+            if hist:
+                p["current_price"] = hist[0]["our_price"]
+                p["last_updated"] = hist[0]["timestamp"].replace("T", " ")[:19]
+        except Exception:
+            pass
+        return p
+    finally:
+        conn.close()
 
-def get_product(pid):
-    import db
-    with _lock:
-        for p in PRODUCTS:
-            if p["id"] == pid:
-                c = p.copy()
-                try:
-                    hist = db.get_price_history(c["id"])
-                    if hist:
-                        c["current_price"] = hist[0]["our_price"]
-                        c["last_updated"] = hist[0]["timestamp"].replace("T", " ")[:19]
-                except Exception:
-                    pass
-                return c
-    return None
+def update_product(pid: str, **kwargs) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        # Get existing
+        p = get_product(pid)
+        if not p:
+            return None
+        
+        # Build update query
+        fields = []
+        params = []
+        for k, v in kwargs.items():
+            if k == "constraints":
+                fields.append("constraints_json = ?")
+                params.append(json.dumps(v))
+            elif k in ["name", "current_price", "cost_price", "category", "status"]:
+                fields.append(f"{k} = ?")
+                params.append(v)
+        
+        if fields:
+            params.append(pid)
+            with conn:
+                conn.execute(f"UPDATE tracked_products SET {', '.join(fields)} WHERE id = ?", params)
+            
+        return get_product(pid)
+    finally:
+        conn.close()
 
+def set_status(pid: str, status: str) -> bool:
+    conn = get_connection()
+    try:
+        with conn:
+            cur = conn.execute("UPDATE tracked_products SET status = ? WHERE id = ?", (status, pid))
+        return cur.rowcount > 0
+    finally:
+        conn.close()
 
-def update_product(pid, **kwargs):
-    with _lock:
-        for p in PRODUCTS:
-            if p["id"] == pid:
-                p.update(kwargs)
-                if "current_price" in kwargs:
-                    p["last_updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                    p["status"] = "Updated"
-                return p.copy()
-    return None
+def add_product(product_data: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        # Check if already exists
+        with conn:
+            cur = conn.execute("SELECT id FROM tracked_products WHERE id = ?", (product_data["id"],))
+            if cur.fetchone():
+                return product_data
+            
+            conn.execute(
+                """INSERT INTO tracked_products (id, name, current_price, cost_price, category, status, constraints_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    product_data["id"], product_data["name"], product_data["current_price"], 
+                    product_data["cost_price"], product_data["category"], product_data["status"],
+                    json.dumps(product_data.get("constraints", {})), time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                )
+            )
+        return product_data
+    finally:
+        conn.close()
 
-
-def set_status(pid, status):
-    with _lock:
-        for p in PRODUCTS:
-            if p["id"] == pid:
-                p["status"] = status
-                return True
-    return False
+def remove_product(pid: str) -> bool:
+    """Remove a product from the tracker and clean up its history."""
+    conn = get_connection()
+    try:
+        with conn:
+            # Delete from tracker
+            cur = conn.execute("DELETE FROM tracked_products WHERE id = ?", (pid,))
+            deleted_count = cur.rowcount
+            
+            # Clean up associated tables
+            conn.execute("DELETE FROM price_history WHERE product_id = ?", (pid,))
+            conn.execute("DELETE FROM scheduler_log WHERE product_id = ?", (pid,))
+            
+        return deleted_count > 0
+    finally:
+        conn.close()

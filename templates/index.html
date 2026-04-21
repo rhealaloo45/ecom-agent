@@ -21,7 +21,7 @@
             </div>
             <div class="nav-right" style="display: flex; align-items: center; gap: 16px;">
                 <div class="scheduler-actions" style="display: flex; gap: 8px; align-items: center; border-right: 1px solid var(--border); padding-right: 16px;">
-                    <button class="btn-scheduler" id="btnRunNow" onclick="runAgent()">Run Now</button>
+                    <a href="/catalog" class="btn btn-primary btn-sm" style="text-decoration: none; padding: 6px 12px; border-radius: 6px;"><i class="bi bi-cloud-download"></i> Import Catalog</a>
                     <button class="btn-scheduler-outline" id="btnGoogleTasks" onclick="connectGoogleTasks()">Connect Google Tasks</button>
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-secondary);">
@@ -201,6 +201,30 @@
                                     <span class="demand-value" id="demandScarcity">—</span>
                                 </div>
                             </div>
+                            <!-- Demand Reasoning (NEW) -->
+                            <div id="demandReasoningBox" style="padding: 12px 16px; background: #fafbfc; border-top: 1px solid var(--border-light); font-size: 13px; color: var(--text-secondary); line-height: 1.5; font-style: italic;">
+                                <i class="bi bi-lightbulb text-primary me-1"></i> <span id="demandReasoning">Analyzing demand signals...</span>
+                            </div>
+                        </div>
+
+                        <!-- Seasonal Insights (NEW) -->
+                        <div class="card-custom">
+                            <div class="card-title-row">
+                                <i class="bi bi-calendar-event"></i>
+                                <span>Seasonal Analysis</span>
+                                <span class="badge bg-primary" id="seasonalPeakBadge" style="display:none;">Peak</span>
+                            </div>
+                            <div class="seasonal-body" style="padding: 16px;">
+                                <div id="seasonalStatus" style="font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">
+                                    Loading seasonal data...
+                                </div>
+                                <div id="seasonalEvents" style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
+                                </div>
+                                <div class="seasonal-multiplier-box" id="multiplierBox" style="margin-top: 12px; padding: 10px; background: rgba(59, 130, 246, 0.05); border-radius: 8px; border-left: 3px solid var(--accent);">
+                                    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 2px;">Demand Multiplier</div>
+                                    <div id="seasonalMultiplier" style="font-size: 18px; font-weight: 700; color: var(--accent);">1.00x</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -212,6 +236,19 @@
                             <span class="badge" id="guardrailBadge">—</span>
                         </div>
                         <div class="guardrail-list" id="guardrailList">
+                        </div>
+                    </div>
+
+                    <!-- Suggested Alternatives -->
+                    <div class="card-custom suggested-alts-card" id="suggestedAltsCard" style="display:none; margin-top:20px;">
+                        <div class="card-title-row">
+                            <i class="bi bi-shop"></i>
+                            <span>Other Marketplaces to Monitor</span>
+                        </div>
+                        <div style="padding:16px;">
+                            <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">Based on this product's category, consider checking prices on these platform-specific alternatives:</p>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;" id="suggestedAltsContainer">
+                            </div>
                         </div>
                     </div>
                 </div>
