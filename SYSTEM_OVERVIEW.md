@@ -6,307 +6,194 @@
 
 ## High-Level Architecture
 
-The project is organized into three primary layers:
+The project is organized into four primary layers:
 
 1. **Frontend UI**
-   - `templates/index.html` and `static/app.js`
+   - `templates/index.html`, `templates/catalog.html` and `static/app.js`
    - Allows users to select products, trigger the pricing agent, inspect competitor intelligence, and approve price changes.
+   - The **Catalog Dashboard** provides an interface for importing products from external e-commerce platforms.
 
 2. **Backend API**
    - `app.py`
    - Serves API endpoints for listing products, selecting a product, running the agent workflow, and applying price changes.
+   - Handles catalog synchronization (`/catalog`, `/api/add-to-tracker`).
 
 3. **Agent Workflow & Business Logic**
-   - `agent.py`, `scrapers.py`, `demand.py`, `pricing.py`, `guardrails.py`, `products.py`, `db.py`, `scheduler.py`, `google_tasks.py`, `notifications.py`
-   - Executes a step-by-step process that scrapes competitor data, analyzes demand, generates recommendations, validates them, stores history, schedules recurring monitoring, creates tasks on guardrail failure, and sends alert emails.
+   - `agent.py`, `scrapers.py`, `demand.py`, `pricing.py`, `guardrails.py`, `products.py`, `db.py`, `scheduler.py`, `google_tasks.py`, `competitor_sources.py`
+   - Executes a step-by-step process that scrapes competitor data, analyzes demand, generates recommendations, validates them, and optionally enters an **Agentic Loop** for refinement.
+
+4. **External Integrations & Sync**
+   - `ecommerce_connectors.py`
+   - Facilitates product imports from platforms like Shopify, WooCommerce, and a specialized Free E-commerce Products API.
 
 ## Core Workflow
 
-### 1. Product Selection
+### 1. Product Selection & Cataloging
 
-- The frontend loads product metadata from `GET /products`.
-- When a product is selected, the frontend posts to `POST /select_product`.
-- `app.py` stores the selected product ID and returns the product details.
+- Users can browse the main dashboard or the **Import Catalog**.
+- In the Catalog, users can sync products from the Free E-commerce Products API (using `FreeApiConnector`) and add them to the main tracker.
+- Added products are immediately available in `products.py` and persisted in `pricesync.db`.
 
-### 2. Running the Agent
+### 2. Running the Agent (Two Graph Architectures)
 
-- The user clicks "Check Competitors".
-- The frontend calls `POST /run-agent` with the selected product ID.
-- `app.py` loads the product and calls `run_agent()` from `agent.py`.
-- Product status is updated through the lifecycle (`Fetching`, `Analyzing`, `Analyzed`, or `Error`).
+The system supports two graph execution modes for pricing:
 
-### 3. Workflow Execution in `agent.py`
+#### **A. Legacy Pipeline (Static)**
+- A linear flow: `Scraper` → `Demand` → `Normalize` → `Pricing` → `Guardrail` → `Decision`.
+- Logic is deterministic and routes based on preset thresholds to `AutoApply` or `HumanReview`.
 
-The agent workflow is implemented as a `langgraph` state graph. It executes nodes in sequence:
+#### **B. New Agentic Loop (Dynamic)**
+- After the initial recommendation and guardrail check, the workflow enters an **Agentic Loop node**.
+- An LLM evaluates the current internal state and determines if further action is needed using **Tools**:
+  - `refine_price_tool`: Re-runs pricing with tweaked constraints if guardrails fail.
+  - `fetch_deep_market_data`: Extends searches to more sources if confidence is low.
+  - `request_human_approval`: Explicitly flags the run for human review via Google Tasks if boundaries are hit.
+- The loop continues until a `FINAL_DECISION` is reached or a retry limit is hit.
 
-- `input_node`: loads the selected product into state.
-- `scraper_node`: scrapes competitor listings using `scrape_all()`.
-- `demand_node`: computes demand metrics with `analyze_demand()`.
-- `normalization_node`: normalizes raw data into a lightweight schema.
-- `pricing_node`: requests a pricing recommendation from `get_pricing_recommendation()`.
-- `guardrail_node`: validates the recommendation against business rules.
-- `decision_node`: finalizes the recommended price and adjusts it if guardrails fail.
-- `route_decision()`: chooses either `auto_apply_node` or `human_review_node`.
+### 3. Category-Aware Scraping
 
-The graph compiles once at startup and is executed for each product request.
-
-### 4. Final Decision
-
-- If guardrails pass and confidence is high, the agent goes to `auto_apply`.
-- If guardrails fail or confidence is low, the agent goes to `human_review`.
-- This routing is mocked in the current implementation; it records audit logs but does not integrate with an actual approval queue.
+The agent uses `competitor_sources.py` to map product categories (e.g., *Electronics, Clothing, Home*) to the most relevant scraping adapters.
+- **Electronics**: Amazon, Newegg.
+- **Fashion**: Myntra, Amazon.
+- **Marketplace**: eBay.
 
 ## File-Level Responsibilities
 
 ### `app.py`
 
-- Creates the Flask application.
-- Loads environment variables with `python-dotenv`.
-- Registers endpoints:
-  - `/` → serves the UI.
-  - `/products` → returns seeded product data.
-  - `/select_product` → selects a product for analysis.
-  - `/run-agent` → runs the full pricing workflow.
-  - `/apply-price` → updates the selected product's price.
-- Uses `products.py` to manage in-memory product state.
+- Creates the Flask application and registers all routes.
+- **New Endpoints**:
+  - `/catalog` → renders the synchronization dashboard.
+  - `/api/add-to-tracker` → promotes a fetched product to the active price tracker.
+- Manages the lifecycle of seeded and dynamically added products.
 
 ### `products.py`
 
-- Stores seeded product records in memory.
-- Provides thread-safe operations using a lock.
-- Implements:
-  - `get_products()`
-  - `get_product(pid)`
-  - `update_product(pid, **kwargs)`
-  - `set_status(pid, status)`
-- Tracks `current_price`, `cost_price`, category, constraints, and last update metadata.
+- Manages in-memory product state and synchronizes with the `products` and `price_history` database tables.
+- Provides thread-safe methods for product selection, status updates, and dynamic insertion.
 
 ### `agent.py`
 
-- Builds the price agent pipeline as a `langgraph` state graph.
-- Orchestrates the following nodes:
-  - Scraping
-  - Demand analysis
-  - Data normalization
-  - LLM pricing recommendation
-  - Guardrail validation
-  - Decision making
-  - Routing for auto-apply or review
-- Maintains an execution state object with logs, intermediate data, and the final decision.
+- Orchestrates the `langgraph` state graphs.
+- Contains the `AgentState` definition (`TypedDict`) which acts as the system's **Episodic Memory**.
+- Defines both the `AGENT_GRAPH` (Legacy) and the enhanced agentic loop graph.
+- Implements tools for the LLM-driven loop.
+
+### `ecommerce_connectors.py`
+
+- Provides a unified `EcommerceConnector` interface.
+- Implements adapters for:
+  - **Shopify**: Connects via Admin API.
+  - **WooCommerce**: Connects via REST API.
+  - **FreeApiConnector**: Pulls from a public JSON-based product registry.
+- Uses `ConnectorFactory` for dynamic instantiation.
+
+### `competitor_sources.py`
+
+- Acts as a lookup table for category-to-source mappings.
+- Provides suggested alternative sources if a category is under-represented.
 
 ### `scrapers.py`
 
-- Contains scraping adapters for competitor price extraction.
-- Uses `requests` and `BeautifulSoup`.
-- Defines adapters for:
-  - Amazon
-  - Flipkart
-  - Google Shopping
-- Each adapter:
-  - constructs search URLs from the product name
-  - sends requests with rotating user-agent headers
-  - parses HTML for titles, prices, links, and stock status
-  - returns a list of competitor listings with source, price, stock status, seller type, and URL
-- Aggregates all adapter results in `scrape_all()`.
+- Enhanced with several new scraping adapters: `EbayAdapter`, `NeweggAdapter`, and `MyntraAdapter`.
+- Includes fallback mock data generation for bot-protected services.
 
 ### `demand.py`
 
-- Computes a demand score from scraped market signals.
-- Uses:
-  - price competitiveness
-  - stock scarcity and out-of-stock signals
-  - competitor density
-  - category multipliers
-- Outputs:
-  - `demand_score` (0-1)
-  - `trend` (`Increasing`, `Decreasing`, `Stable`)
-  - detailed `signals` such as average and min competitor price
-- This score is used by pricing logic to decide whether to be aggressive or conservative.
+- Extracts market signals (scarcity, velocity, competitor density) to compute a demand score (0.0 to 1.0).
 
 ### `pricing.py`
 
-- Contains the pricing recommendation engine.
-- Primary strategy is LLM-driven pricing using OpenRouter.
-- Key behaviors:
-  - builds a structured prompt containing product data, competitor prices, demand signals, and pricing constraints
-  - calls OpenRouter chat completion endpoint at `https://openrouter.ai/api/v1/chat/completions`
-  - uses `MODEL = "google/gemma-4-31b-it:free"` and fallback models like `microsoft/wizardlm-2-8x22b`
-  - retries transient server errors and 429 rate limits
-  - parses raw LLM output into JSON with robust fallback parsing and regex extraction
-  - returns `recommended_price`, `reasoning`, `confidence`, `strategy`, and `source`
-- Fallback logic:
-  - if `OPENROUTER_API_KEY` is missing, it returns a heuristic fallback priced by `_heuristic_pricing()`
-  - if OpenRouter fails and `OPENROUTER_FALLBACK` is enabled, it runs `_local_ai_pricing()` instead
-
-### `db.py`
-
-- Initializes SQLite persistence in `pricesync.db`.
-- Stores historical snapshots in `price_history`.
-- Stores scheduler run metadata in `scheduler_log`.
-- Exposes:
-  - `insert_price_snapshot()`
-  - `get_price_history(product_id)`
-  - `log_scheduler_run()`
-  - `get_last_scheduler_runs()`
-
-### `scheduler.py`
-
-- Uses `APScheduler` to run the full agent for every product every two hours.
-- Calls the same `run_agent(product, run_type='auto')` logic used by the manual endpoint.
-- Logs every run to the scheduler table.
-- Exposes `get_scheduler_status()` so the UI can poll next and last run times.
-
-### `google_tasks.py`
-
-- Integrates with Google Tasks via OAuth2.
-- Loads OAuth client configuration from `credentials.json`.
-- Stores token state in `token.json`.
-- Exposes `create_pricing_task(product_name, issue_summary)`.
-- Creates a task with a tomorrow due date when guardrails fail.
-
-### `notifications.py`
-
-- Sends email alerts using built-in `smtplib` and `email.mime`.
-- Reads SMTP configuration from environment variables.
-- Exposes `send_price_alert(product_name, event_type, details_dict)`.
-- Sends alerts for guardrail breaches and auto-applied pricing.
+- Interacts with OpenRouter LLMs to generate high-confidence pricing recommendations.
+- Implements heuristic fallbacks for offline or budget-constrained scenarios.
 
 ### `guardrails.py`
 
-- Enforces pricing safety rules.
-- Validates recommendations against:
-  - minimum margin percentage
-  - maximum allowed price movement
-  - brand positioning rules (`premium`, `mid-range`, `budget`)
-- Returns a result object containing pass/fail status for each rule and overall compliance.
+- Enforces business safety rules such as minimum margin percentage, maximum price volatility, and category-level positioning.
 
-### `templates/index.html`
+### `db.py` and Database Overview
 
-- The main single-page UI.
-- Provides product selection, status display, logs, recommendation cards, competitor table, demand insights, and guardrail validation.
-- Loads Bootstrap CSS, icons, and a custom stylesheet.
+The system uses `pricesync.db` with several key tables:
+- **`price_history`**: Every decision, including metadata like `demand_score`, `our_price`, and `guardrail_passed`.
+- **`scheduler_log`**: Records autonomous runs triggered by the background job.
+- **`product_sources`**: Stores products fetched from external connectors before they are tracked.
 
-### `static/app.js`
+### `google_tasks.py`
 
-- Client-side controller for the UI.
-- Responsibilities:
-  - fetch product list and render product cards
-  - handle product selection
-  - call `/run-agent` and display progress
-  - render competitor data, demand insights, recommendation details, and guardrail results
-  - call `/apply-price` when the user approves a recommendation
-  - generate toast messages and status updates
-- It does not manage business logic; it simply visualizes backend results.
+- Automates escalation by creating tasks for human reviewers when the agent faces low confidence or guardrail breaches.
 
-### `run.sh`
+## System Architecture & Data Flow
 
-- A convenience shell script for starting the server.
-- Kills any process on port `5001` and launches `python3 app.py` while teeing logs to `app.log`.
+### Overall System Architecture
 
-## Data Flow Diagram
+```mermaid
+flowchart TD
+    UI([Browser Dashboard / Catalog]) <--REST API--> API[Flask Backend app.py]
+    Scheduler([Background APScheduler]) --"Triggers Auto Runs"--> API
+    
+    subgraph Connectors
+        FreeAPI[Free E-com API]
+        Shopify[Shopify / Woo]
+    end
+    
+    API --"Import Catalog"--> Connectors
+    API --"Initializes"--> Agent[LangGraph Pipeline]
+    
+    subgraph Agent Loop
+        AgentNode[Agentic Node] --"Tools"--> Refine[Refine Price]
+        AgentNode --"Tools"--> DeepFetch[Deep Market Data]
+    end
+    
+    Agent -- "1. Scrapes" --> Targets[Market Targets]
+    Agent -- "2. AI Recommendation" --> LLM[OpenRouter / Gemma]
+    Agent -- "3. Escalation" --> GTasks[Google Tasks]
+    
+    subgraph Persistence
+        SQLite[(pricesync.db)]
+        Memory[products.py State]
+    end
+    
+    Agent -- "Persist History" --> SQLite
+    API -- "Hydrate" --> SQLite
+```
 
-1. User opens the UI.
-2. Browser fetches product list from `/products`.
-3. User selects a product and clicks "Check Competitors".
-4. Frontend posts to `/run-agent`.
-5. Backend loads the selected product from `products.py`.
-6. `agent.py` executes the workflow:
-   - scrape competitor listings
-   - analyze demand signals
-   - normalize data
-   - generate pricing recommendation with LLM
-   - validate against guardrails
-   - finalize the decision
-7. Backend returns competitor data, demand metrics, recommendation, guardrail results, and logs.
-8. Frontend renders the full analysis and allows price approval.
-9. If approved, frontend posts to `/apply-price`.
-10. Backend updates the product price and status in memory.
+### Agentic Loop Pipeline (Modern)
+
+```mermaid
+flowchart TD
+    Start((Start)) --> Scrape[Scraper Node\nCategory-Aware]
+    Scrape --> Demand[Demand Node]
+    Demand --> Pricing[AI Pricing Generator]
+    Pricing --> Guardrail[Guardrail Check]
+    Guardrail --> AgentLoop{Agent Loop Node\nLLM Evaluation}
+    
+    AgentLoop --"Violation Found"--> Refine[Refine Node\nAdjust Constraints]
+    AgentLoop --"Low Confidence"--> Fetch[Deep Fetch Node\nAdd Sources]
+    AgentLoop --"Success"--> Finalize[Finalize Pricing]
+    AgentLoop --"Fail / Max Retries"--> Approval[Request Human Approval]
+    
+    Refine --> AgentLoop
+    Fetch --> AgentLoop
+    Finalize --> End((End))
+    Approval --> End
+```
 
 ## Configuration
 
 ### Environment Variables
 
-- `OPENROUTER_API_KEY`
-  - required for LLM pricing.
-  - if absent, the backend falls back to heuristic pricing.
-
-- `OPENROUTER_FALLBACK`
-  - default enabled unless explicitly set to `0`, `false`, `no`, or `off`.
-  - controls whether the system uses local fallback pricing when OpenRouter is unavailable.
-
-- `PORT`
-  - optional port override for Flask. Defaults to `5001`.
-
-- `BASE_URL`
-  - optional base URL used for Google OAuth redirect URIs.
-  - defaults to `http://localhost:5001`.
-
-- `NOTIFY_EMAIL_FROM`
-  - email address used as the sender for alert emails.
-
-- `NOTIFY_EMAIL_TO`
-  - recipient address for alert emails.
-
-- `NOTIFY_SMTP_HOST`
-  - SMTP server hostname.
-
-- `NOTIFY_SMTP_PORT`
-  - SMTP port (default `587`).
-
-- `NOTIFY_SMTP_PASSWORD`
-  - SMTP app password or login password for the sender account.
-
-### Required Dependencies
-
-From `requirements.txt`:
-
-- `flask>=3.0.0`
-- `flask-cors>=4.0.0`
-- `langgraph>=0.2.0`
-- `langchain-core>=0.2.27`
-- `requests>=2.31.0`
-- `beautifulsoup4>=4.12.2`
-- `httpx>=0.27.0`
-- `python-dotenv>=1.0.0`
-- `apscheduler>=3.10.0`
-- `google-auth>=2.0.0`
-- `google-auth-oauthlib>=1.0.0`
-- `google-api-python-client>=2.0.0`
-
-## Notes on Behavior and Design
-
-- The product catalog is in-memory and seeded in `products.py`. It is not persisted to disk.
-- Scraping relies on HTML structure and may break if target sites change or block requests.
-- The LLM prompt is designed to enforce single JSON output, but the code includes parse recovery for imperfect responses.
-- Guardrails are intentionally strict to avoid risky price changes.
-- The workflow is built as an explicit graph, making it easy to extend nodes or add decision branches.
+- `OPENROUTER_API_KEY`: Required for AI pricing.
+- `BASE_URL`: For Google OAuth.
+- `SHOPIFY_ACCESS_TOKEN` / `WOOCOMMERCE_SITE_URL`: For optional e-commerce sync.
 
 ## How to Run
 
-1. Create a virtual environment and install dependencies.
-2. Set `OPENROUTER_API_KEY` in a `.env` file.
-3. Run `python app.py` or use `./run.sh`.
-4. Open `http://localhost:5001` in a browser.
-
-## Important File Map
-
-- `app.py` — Flask API and routing.
-- `agent.py` — workflow orchestration and logic flow.
-- `scrapers.py` — competitor scraping adapters.
-- `demand.py` — demand score computation.
-- `pricing.py` — LLM pricing recommendation and fallback engine.
-- `guardrails.py` — price safety validation.
-- `products.py` — in-memory product store.
-- `templates/index.html` — browser UI shell.
-- `static/app.js` — frontend controller.
-- `static/style.css` — presentation styles.
-- `requirements.txt` — runtime dependencies.
-- `run.sh` — startup helper.
-- `db.py` — SQLite history and scheduler log persistence.
-- `scheduler.py` — scheduled autonomous monitoring loop.
-- `google_tasks.py` — Google Tasks integration for guardrail issues.
-- `notifications.py` — SMTP email alert delivery.
+1.  Run `pip install -r requirements.txt`.
+2.  Configure `.env` with keys.
+3.  Launch `./run.sh` or `python app.py`.
+4.  Visit `http://localhost:5001`.
+5.  (Optional) Visit `http://localhost:5001/catalog` to import new products.
 
 ## Summary
 
-`PriceSync` is built as a self-contained experimental pricing intelligence platform. It combines live competitor scraping, demand modeling, and LLM-driven pricing with rule-based guardrails. The frontend provides an interactive product review and approval experience, while backend state is maintained in memory with a controlled workflow executed through a graph-based agent.
+`PriceSync` has evolved from a static pricing script into an **Autonomous Pricing Agent**. It leverages category-specific market intelligence, an agentic retry loop, and a robust catalog synchronization system to manage e-commerce pricing at scale while maintaining human-in-the-loop safety via Google Tasks.

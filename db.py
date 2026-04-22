@@ -10,8 +10,10 @@ DB_PATH = os.path.join(BASE_DIR, "pricesync.db")
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode for better concurrency
+    conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
 
@@ -47,6 +49,54 @@ def init_db() -> None:
                 status TEXT NOT NULL,
                 message TEXT,
                 timestamp TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS product_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                external_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                description TEXT,
+                category TEXT,
+                current_price REAL,
+                cost_price REAL,
+                sku TEXT,
+                image_url TEXT,
+                raw_metadata TEXT,
+                last_synced TEXT,
+                created_at TEXT,
+                UNIQUE(external_id, platform)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tracked_products (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                current_price REAL,
+                cost_price REAL,
+                category TEXT,
+                status TEXT,
+                constraints_json TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS festival_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                year INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                multiplier REAL NOT NULL,
+                category_hint TEXT,
+                fetched_at TEXT NOT NULL
             )
             """
         )

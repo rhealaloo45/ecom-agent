@@ -216,6 +216,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 # PriceSync specific files
-pricesync.db
+*.db
+*.db-journal
+*.log
 credentials.json
 token.json

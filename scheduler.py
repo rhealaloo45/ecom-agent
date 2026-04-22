@@ -5,6 +5,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import db
 from products import get_products
 from agent import run_agent
+from seasonal import clear_festival_cache, get_festivals_cached
 
 log = logging.getLogger(__name__)
 scheduler = BackgroundScheduler(timezone="UTC")
@@ -29,6 +30,17 @@ def _monitor_all_products():
     log.info("Scheduler completed auto-monitor run")
 
 
+def _refresh_festival_cache():
+    """Daily job to refresh festival cache for current and next year."""
+    now = datetime.now()
+    years = [now.year, now.year + 1]
+    log.info("Starting daily festival cache refresh for years %s", years)
+    for year in years:
+        clear_festival_cache(year)
+        get_festivals_cached(year)
+    log.info("Festival cache refresh complete")
+
+
 def start():
     if scheduler.get_jobs():
         return
@@ -39,6 +51,14 @@ def start():
         id="pricesync_monitor",
         replace_existing=True,
     )
+    scheduler.add_job(
+        _refresh_festival_cache,
+        "cron",
+        hour=0,
+        minute=1,
+        id="festival_cache_refresh",
+        replace_existing=True,
+    )
     scheduler.start()
     
     # NEW: Automatically shut down the background scheduler when Flask exits
@@ -46,6 +66,14 @@ def start():
     atexit.register(lambda: scheduler.shutdown(wait=False))
     
     log.info("Scheduler started")
+
+
+def trigger_now():
+    """Immediately executes the background scheduler loop for all products."""
+    job = scheduler.get_job("pricesync_monitor")
+    if job:
+        log.info("Force triggering background scheduler logic immediately.")
+        job.modify(next_run_time=datetime.now(timezone.utc))
 
 
 def get_scheduler_status():
